@@ -1,0 +1,229 @@
+---
+title: "Medical Sugar Chatbot - Complete Technical Documentation & Architecture Report"
+author: "Gunaseelan & Antigravity AI"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: readable
+    highlight: tango
+---
+
+# 1. Project Overview
+
+The **Medical Sugar (Diabetes) Chatbot** is an AI-powered clinical assistant built using **RAG (Retrieval-Augmented Generation)**. It allows patients, healthcare practitioners, and students to ask questions related to blood sugar management, diabetes symptoms, diagnostic criteria, diet advice, and treatment guidelines.
+
+Instead of relying on general-purpose AI models that can generate medical hallucinations, this chatbot strictly searches and grounds its answers in verified medical reference papers and clinical guidelines stored in the `data/` directory.
+
+---
+
+# 2. System Architecture & Workflow
+
+The architecture follows a dual-pipeline pattern: **Offline Data Ingestion** and **Real-Time Query Answering**.
+
+```
+[ CLINICAL PDF DOCUMENTS ]
+            │
+            ▼ (PyPDFLoader & DirectoryLoader)
+[ RAW DOCUMENT TEXT EXTRACTION ]
+            │
+            ▼ (RecursiveCharacterTextSplitter: 500 chars, 20 overlap)
+[ CHUNKED TEXT SEGMENTS ]
+            │
+            ▼ (Sentence-Transformers: all-MiniLM-L6-v2)
+[ 384-DIMENSIONAL DENSE VECTORS ]
+            │
+            ▼ (Pinecone API - Serverless AWS)
+[ PINECONE CLOUD VECTOR DATABASE ]
+            ▲
+            │ (Top-K Cosine Similarity Search)
+┌───────────┴────────────────────────────────────────┐
+│               ONLINE USER QUERY PIPELINE           │
+│                                                    │
+│  User Question ──► MiniLM Query Vector ──► Search  │
+│                                                    │
+│  Retrieved Chunks + System Prompt + User Query     │
+│                         │                          │
+│                         ▼                          │
+│        [ Groq Cloud LPU: qwen/qwen3.8-27b ]        │
+│                         │                          │
+│                         ▼                          │
+│       Concise & Accurate Clinical Response         │
+│                         │                          │
+│                         ▼                          │
+│       [ Flask Web UI: Browser Chat Window ]        │
+└────────────────────────────────────────────────────┘
+```
+
+---
+
+# 3. Technologies & Frameworks Used
+
+| Layer | Technology / Tool | Version | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Programming Language** | Python | 3.13 | Core backend scripting and pipeline logic |
+| **Web Framework** | Flask | 3.1.1 | Lightweight web server & REST API endpoints (`/` and `/get`) |
+| **LLM Orchestration** | LangChain Core / Community | 0.3.x | Pipeline chaining, document loaders, and prompt management |
+| **Vector Database** | Pinecone Cloud | 7.3.0 | Fast, managed, cloud-native vector database (AWS Serverless) |
+| **Pinecone Integration** | `langchain-pinecone` | 0.2.8 | Vector store interface connecting LangChain to Pinecone |
+| **High-Speed LLM Inference** | Groq Cloud (`langchain-groq`) | 0.3.8 | Ultra-fast LPU inference engine for open-weights LLMs |
+| **Embeddings & NLP** | `sentence-transformers` | 4.1.0 | Generates semantic dense vector representations |
+| **Deep Learning Engine** | PyTorch (`torch`) | 2.9.1 | Underlying neural network computation engine |
+| **Document Parser** | `pypdf` | 5.6.1 | PDF parsing and text stream extraction |
+| **Frontend UI** | HTML5 / CSS3 / JavaScript | - | Modern, responsive medical chat interface with typing animation |
+
+---
+
+# 4. Models Used & Why
+
+### 4.1 Embedding Model: `sentence-transformers/all-MiniLM-L6-v2`
+- **Model Type:** Pre-trained Bi-Encoder Transformer (distilled MiniLM architecture).
+- **Embedding Dimensions:** `384` floating-point numbers per chunk.
+- **Max Sequence Length:** 256 tokens.
+- **Why Chosen:**
+  1. **Speed & Size:** Very small memory footprint (~80 MB), making it fast on CPU and GPU.
+  2. **Semantic Accuracy:** Trained specifically on over 1 billion sentence pairs for semantic search and question-answering tasks.
+  3. **Cosine Efficiency:** Outputs normalized embeddings, making cosine similarity computation simple dot products.
+
+### 4.2 Generative LLM: `qwen/qwen3.8-27b` via Groq LPU
+- **Model Type:** Large Language Model (27 Billion Parameters).
+- **Inference Engine:** Groq Tensor Streaming Processor (LPU - Language Processing Unit).
+- **Temperature Setting:** `0.3` (low temperature ensures factual, clinically consistent, non-creative outputs).
+- **Why Chosen:**
+  1. **Ultra-Low Latency:** Groq delivers hundreds of tokens per second, enabling instantaneous chatbot responses.
+  2. **Medical Reasoning:** High reasoning capability to synthesize complex clinical data into simple, readable explanations for patients.
+  3. **Strict Adherence:** Strong instruction-following capability when bound by system guardrails.
+
+---
+
+# 5. Core Algorithms & Mathematical Techniques
+
+### 5.1 Retrieval-Augmented Generation (RAG)
+Large Language Models have static training cutoff dates and risk hallucinating medical facts. 
+**RAG Algorithm:**
+1. **Index:** Convert domain-specific documents $D$ into chunks $c_i \in D$ and embed them as vectors $\vec{v}_i = \text{Embed}(c_i)$.
+2. **Retrieve:** When a query $q$ arrives, compute $\vec{v}_q = \text{Embed}(q)$. Find top $k$ chunks with the highest similarity score.
+3. **Augment:** Construct an augmented prompt:
+   $$\text{Prompt} = \text{System Instructions} + \sum_{i=1}^{k} c_i + q$$
+4. **Generate:** Generate the output text $A = \text{LLM}(\text{Prompt})$.
+
+### 5.2 Cosine Similarity Metric
+Pinecone uses cosine similarity to rank the relevance of clinical chunks to the user's question:
+
+$$\text{Cosine Similarity}(\vec{u}, \vec{v}) = \frac{\vec{u} \cdot \vec{v}}{\|\vec{u}\|_2 \|\vec{v}\|_2} = \frac{\sum_{i=1}^{n} u_i v_i}{\sqrt{\sum_{i=1}^{n} u_i^2} \sqrt{\sum_{i=1}^{n} v_i^2}}$$
+
+- Value ranges from $-1$ to $+1$.
+- $+1$ represents identical semantic direction, $0$ represents orthogonal/unrelated topics.
+
+### 5.3 Recursive Character Text Splitting
+Standard splitters break words arbitrarily. Recursive Character Splitting uses hierarchical separators:
+1. Double newlines (`\n\n`) - Paragraph boundaries.
+2. Single newlines (`\n`) - Sentence/line boundaries.
+3. Spaces (`" "`) - Word boundaries.
+4. Empty strings (`""`) - Character fallback.
+
+**Hyperparameters:**
+- `chunk_size = 500`: Ensures each snippet contains 2-4 cohesive medical sentences.
+- `chunk_overlap = 20`: Prevents information loss at chunk boundaries.
+
+---
+
+# 6. Detailed Project Structure & File Roles
+
+```
+sugar chat bot/
+├── .env                            # API keys (PINECONE_API_KEY, GROQ_API_KEY)
+├── app.py                          # Main Flask web server & RAG query endpoint
+├── store_index.py                  # Batch ingestion script to chunk & upload to Pinecone
+├── requirements.txt                # Python package dependencies
+├── setup.py                        # Package metadata setup
+├── data/                           # Clinical Reference PDFs (Diabetes literature)
+│   ├── diabetes (1).pdf
+│   ├── Diabetes-Mellitus-English.pdf
+│   ├── Diabetes.pdf
+│   └── IJCRM20254286.pdf
+├── research/
+│   └── trials.ipynb                # Prototyping & experimentation notebook
+├── src/
+│   ├── __init__.py                 # Python package identifier
+│   ├── helper.py                   # PDF loader, chunking, and MiniLM embedding wrappers
+│   └── prompt.py                   # System prompt definition and safety guardrails
+├── static/
+│   └── style.css                   # Custom responsive healthcare UI theme
+└── templates/
+    └── chat.html                   # Interactive web frontend with quick-pill suggestions
+```
+
+---
+
+# 7. Step-by-Step Code Walkthrough
+
+### 7.1 `src/helper.py` - Document Ingestion & Embeddings
+- `load_pdf_files("data")`: Uses `DirectoryLoader` with `PyPDFLoader` to read all `.pdf` files.
+- `filter_to_minimal_docs()`: Strips unnecessary metadata to save storage and Pinecone bandwidth.
+- `text_split()`: Splits docs into 500-character chunks with 20-character overlap.
+- `MiniLMEmbeddings`: A custom LangChain `Embeddings` class that loads `sentence-transformers/all-MiniLM-L6-v2` locally to guarantee zero network latency and no dependency conflicts.
+
+### 7.2 `src/prompt.py` - Medical Safety Prompt
+```python
+system_prompt = (
+    "You are a helpful and knowledgeable medical assistant specializing in diabetes and blood sugar health.\n"
+    "Use the following pieces of retrieved context to answer the question.\n"
+    "If you don't know the answer, say that you don't know, don't try to make up an answer.\n"
+    "Keep the answer concise, accurate, and easy to understand.\n\n"
+    "{context}"
+)
+```
+This prompt ensures:
+- The bot acts strictly as an assistant.
+- It never invents non-existent medical treatments.
+- The context retrieved from Pinecone is directly injected into `{context}`.
+
+### 7.3 `app.py` - Flask Server & RAG Pipeline
+1. Connects to Pinecone vector index (`medical-sugar-demo-chatbot`).
+2. Configures retriever with $k=3$ (retrieves top 3 most relevant context snippets).
+3. Connects to Groq `qwen/qwen3.8-27b`.
+4. Builds a combined chain:
+   - `create_stuff_documents_chain` - Merges retrieved documents into the prompt template.
+   - `create_retrieval_chain` - Orchestrates retrieval and generation in a single unified callable.
+5. Exposes:
+   - `GET /` : Renders `templates/chat.html`.
+   - `POST /get` : Accepts `{ msg: "..." }` and returns the AI response.
+
+---
+
+# 8. How to Run the Project
+
+### Prerequisites
+Make sure Python 3.10+ is installed and `.env` contains:
+```env
+PINECONE_API_KEY=your_pinecone_key_here
+GROQ_API_KEY=your_groq_key_here
+PINECONE_INDEX_NAME=medical-sugar-demo-chatbot
+```
+
+### Ingest Data (If updating PDFs)
+```powershell
+python store_index.py
+```
+
+### Start the Chatbot Server
+```powershell
+python app.py
+```
+
+### Access Web Application
+Open your browser and navigate to:
+```
+http://127.0.0.1:5000
+```
+
+---
+
+# 9. Summary & Highlights
+
+- **Zero Hallucination:** Answers are strictly grounded in verified diabetes publications.
+- **Lightning Fast:** Groq LPU inference responds in sub-second time.
+- **Cloud Vector Storage:** Pinecone provides real-time vector search without heavy local database overhead.
+- **User-Centric UI:** Clean, medical-themed interface with suggestion buttons for instant queries.

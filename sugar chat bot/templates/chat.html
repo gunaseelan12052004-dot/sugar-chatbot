@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SugarCare - Medical Diabetes Chatbot</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="header-left">
+                <div class="avatar-icon">
+                    <i class="fa-solid fa-heart-pulse"></i>
+                </div>
+                <div>
+                    <h2>SugarCare Assistant</h2>
+                    <span class="status"><span class="status-dot"></span> Online • RAG Medical AI</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <span class="badge">Diabetes Care</span>
+            </div>
+        </header>
+
+        <!-- Messages Area -->
+        <div class="chat-messages" id="chatMessages">
+            <div class="message bot-message">
+                <div class="msg-avatar"><i class="fa-solid fa-user-doctor"></i></div>
+                <div class="msg-bubble">
+                    <p>Vanakkam! 👋 I am your <strong>SugarCare Medical Assistant</strong>.</p>
+                    <p>I can help you understand blood sugar levels, diabetes symptoms, diet recommendations, and medical guidelines from your clinical knowledge base.</p>
+                    <p><em>How can I assist you today?</em></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Suggestions / Quick Pills -->
+        <div class="quick-prompts">
+            <button class="pill-btn" onclick="sendPrompt('What are common symptoms of diabetes?')">🩺 Diabetes Symptoms</button>
+            <button class="pill-btn" onclick="sendPrompt('What is normal fasting blood sugar?')">📊 Normal Sugar Levels</button>
+            <button class="pill-btn" onclick="sendPrompt('What food should diabetes patients avoid?')">🥗 Diet & Nutrition</button>
+            <button class="pill-btn" onclick="sendPrompt('Difference between Type 1 and Type 2 diabetes?')">⚖️ Type 1 vs Type 2</button>
+        </div>
+
+        <!-- Input Area -->
+        <form class="chat-input-area" id="chatForm">
+            <input 
+                type="text" 
+                id="userInput" 
+                placeholder="Ask any diabetes or blood sugar question..." 
+                autocomplete="off" 
+                required
+            />
+            <button type="submit" id="sendBtn">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        function appendMessage(sender, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender}-message`;
+
+            if (sender === 'bot') {
+                msgDiv.innerHTML = `
+                    <div class="msg-avatar"><i class="fa-solid fa-user-doctor"></i></div>
+                    <div class="msg-bubble">${formatText(text)}</div>
+                `;
+            } else {
+                msgDiv.innerHTML = `
+                    <div class="msg-bubble">${escapeHtml(text)}</div>
+                    <div class="msg-avatar user-avatar"><i class="fa-solid fa-user"></i></div>
+                `;
+            }
+
+            chatMessages.appendChild(msgDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot-message typing-indicator-msg';
+            typingDiv.id = 'typingIndicator';
+            typingDiv.innerHTML = `
+                <div class="msg-avatar"><i class="fa-solid fa-user-doctor"></i></div>
+                <div class="msg-bubble typing-bubble">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+            `;
+            chatMessages.appendChild(typingDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const el = document.getElementById('typingIndicator');
+            if (el) el.remove();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatText(text) {
+            // simple markdown to html
+            let formatted = escapeHtml(text)
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\n\n/g, '<br><br>')
+                .replace(/\n/g, '<br>');
+            return formatted;
+        }
+
+        async function handleSend(text) {
+            const query = text || userInput.value.trim();
+            if (!query) return;
+
+            appendMessage('user', query);
+            userInput.value = '';
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/get', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ msg: query })
+                });
+
+                removeTypingIndicator();
+
+                if (!response.ok) {
+                    throw new Error('Server error: ' + response.statusText);
+                }
+
+                const data = await response.text();
+                appendMessage('bot', data);
+            } catch (err) {
+                removeTypingIndicator();
+                appendMessage('bot', '⚠️ Sorry, could not process request right now. Please try again.');
+                console.error(err);
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            handleSend();
+        });
+
+        function sendPrompt(text) {
+            userInput.value = text;
+            handleSend(text);
+        }
+    </script>
+</body>
+</html>
